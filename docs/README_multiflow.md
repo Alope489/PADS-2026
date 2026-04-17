@@ -1,0 +1,3 @@
+# Multiflow / CODES replay
+
+`scripts/rate_gen.py` reads a JSON rates file and writes `multiflow/period.file`, `conf/work.load`, and `conf/alloc.conf`. `multiflow/exec.sh` runs `model-net-mpi-replay` (binary from `CODES_REPLAY`, default `../../codes/build/bin/bin/model-net-mpi-replay`). `./run_all.sh [rates_file]` runs rate_gen, exec, `scripts/flow_parser.py` on terminal stats, moves outputs to `multiflow/results/<run_id>/` and plots to `results/plots/<run_id>.png`. The top-level `./artifact` run executes both `scripts/flow.rates` (three-flow) and `scripts/two-flow.rates` (two-flow), preserving `results/plots/multi-flow.png` for three-flow and `results/plots/flow.png` for two-flow.

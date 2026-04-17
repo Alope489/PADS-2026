@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export ARTIFACT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ARTIFACT_ROOT"
+
+die() { echo "artifact: $*" >&2; exit 1; }
+
+command -v python3 >/dev/null || die "python3 not found"
+python3 - <<'CHECK' || die "python import check failed (install pandas, matplotlib)"
+import importlib
+importlib.import_module("pandas")
+importlib.import_module("matplotlib")
+CHECK
+if command -v pypy3 >/dev/null 2>&1; then echo "artifact: pypy3 found (optional)"; else echo "artifact: pypy3 not found (optional, skipped)"; fi
+
+CODES_BIN="${CODES_REPLAY:-${ARTIFACT_ROOT}/../codes/build/bin/bin/model-net-mpi-replay}"
+[[ -x "$CODES_BIN" ]] || die "CODES binary missing or not executable: $CODES_BIN (set CODES_REPLAY)"
+
+mkdir -p \
+  "$ARTIFACT_ROOT/results/plots" \
+  "$ARTIFACT_ROOT/results/performance" \
+  "$ARTIFACT_ROOT/results/figures/performance" \
+  "$ARTIFACT_ROOT/results/figures/multi_hop_HOL" \
+  "$ARTIFACT_ROOT/multiflow/results"
+
+export CODES_REPLAY="$CODES_BIN"
+export CODES_BIN="$CODES_BIN"
+python3 "$ARTIFACT_ROOT/scripts/rate_gen.py" "$ARTIFACT_ROOT/scripts/flow.rates"
+./run_all.sh "$ARTIFACT_ROOT/scripts/flow.rates"
+if [[ -f "$ARTIFACT_ROOT/results/plots/flow.png" ]]; then
+  cp "$ARTIFACT_ROOT/results/plots/flow.png" "$ARTIFACT_ROOT/results/plots/multi-flow.png"
+fi
+python3 "$ARTIFACT_ROOT/sim/run_multihop_fluid_credit_rr.py"
+python3 "$ARTIFACT_ROOT/scripts/rate_gen.py" "$ARTIFACT_ROOT/scripts/two-flow.rates"
+./run_all.sh "$ARTIFACT_ROOT/scripts/two-flow.rates"
+if [[ -f "$ARTIFACT_ROOT/results/plots/two-flow.png" ]]; then
+  cp "$ARTIFACT_ROOT/results/plots/two-flow.png" "$ARTIFACT_ROOT/results/plots/flow.png"
+fi
+python3 "$ARTIFACT_ROOT/sim/run_original_fluid_overlay.py"
+
+if [[ "${ARTIFACT_SKIP_BENCHES:-0}" == "1" ]]; then
+  echo "artifact: ARTIFACT_SKIP_BENCHES=1 — skipping benchmarks"
+else
+  python3 "$ARTIFACT_ROOT/scripts/performance/run_sim_time_benchmark.py"
+  python3 "$ARTIFACT_ROOT/scripts/performance/run_granularity_benchmark.py"
+  python3 "$ARTIFACT_ROOT/scripts/performance/run_offered_load_benchmark.py"
+fi
+
+if [[ "${ARTIFACT_SKIP_BENCHES:-0}" == "1" ]]; then
+  _offered="$ARTIFACT_ROOT/results/performance/offered_load_pypy_data.csv"
+  if [[ ! -f "$_offered" && -f /home/andres/workspace/experiment/plots/performance/offered_load_pypy_data.csv ]]; then
+    cp /home/andres/workspace/experiment/plots/performance/offered_load_pypy_data.csv "$_offered"
+    echo "artifact: seeded offered_load_pypy_data.csv from experiment/plots/performance"
+  fi
+fi
+
+python3 "$ARTIFACT_ROOT/scripts/performance/plot_performance_no_titles.py" all || true
+
+python3 - <<'MANIFEST' || true
+import json
+import os
+import time
+from pathlib import Path
+
+root = Path(os.environ["ARTIFACT_ROOT"])
+(root / "results").mkdir(parents=True, exist_ok=True)
+paths = []
+for pat in ("results/**/*.png", "results/**/*.csv", "multiflow/results/**"):
+    paths.extend(str(p) for p in root.glob(pat))
+paths = sorted(set(paths))[:200]
+out = {
+    "ARTIFACT_ROOT": str(root),
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "CODES_BIN": os.environ.get("CODES_BIN", ""),
+    "ARTIFACT_SKIP_BENCHES": os.environ.get("ARTIFACT_SKIP_BENCHES", ""),
+    "glob_outputs": paths,
+}
+mp = root / "results" / "run_manifest.json"
+mp.write_text(json.dumps(out, indent=2) + "\n")
+print("Wrote", mp)
+MANIFEST
+
+echo "artifact: done"

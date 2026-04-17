@@ -1,0 +1,9 @@
+{
+  "tests": [
+    "sim_time_sweep",
+    "granularity_tradeoff",
+    "offered_load_sweep",
+    "multiflow_replay_pipeline",
+    "multihop_overlay"
+  ]
+}
